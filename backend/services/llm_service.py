@@ -29,8 +29,6 @@ def is_biomedical(question: str):
     return any(word in question.lower() for word in biomedical_keywords)
 
 
-# 🔥 ADD THESE TWO FUNCTIONS
-
 def call_groq(final_prompt: str):
     client = Groq(api_key=settings.GROQ_API_KEY)
 
@@ -57,7 +55,18 @@ def call_gemini(final_prompt: str):
     return response.text
 
 
-# 🔥 YOUR EXISTING FUNCTION (keep this)
+def summarize_history(conversation_text: str, provider: str):
+    summary_prompt = f"""
+Summarize the following conversation briefly:
+
+{conversation_text}
+"""
+
+    if provider == "Groq":
+        return call_groq(summary_prompt)
+    elif provider == "Gemini":
+        return call_gemini(summary_prompt)
+
 
 def generate_response(provider: str, prompt: str, memory_enabled: bool, history: list):
 
@@ -65,11 +74,19 @@ def generate_response(provider: str, prompt: str, memory_enabled: bool, history:
         return "⚠️ This chatbot only answers biomedical questions."
 
     if memory_enabled:
+
         conversation_text = ""
+
         for m in history:
             conversation_text += f"{m['role']}: {m['content']}\n"
 
+        # Check context size
+        if len(conversation_text) > settings.CONTEXT_SIZE:
+            summary = summarize_history(conversation_text, provider)
+            conversation_text = f"Summary of previous conversation:\n{summary}\n"
+
         final_prompt = BIOMED_SYSTEM_PROMPT + "\n\nConversation:\n" + conversation_text
+
     else:
         final_prompt = BIOMED_SYSTEM_PROMPT + "\n\nUser Question:\n" + prompt
 
