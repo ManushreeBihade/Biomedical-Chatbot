@@ -1,6 +1,18 @@
 from groq import Groq
 from google import genai
 from backend.core.config import settings
+import logging
+
+# -------------------------------
+# Logging Configuration
+# -------------------------------
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# -------------------------------
+# System Prompt
+# -------------------------------
 
 BIOMED_SYSTEM_PROMPT = """
 You are a biomedical research assistant.
@@ -18,6 +30,10 @@ If the question is not biomedical, politely decline.
 Provide a clear, structured biomedical explanation.
 """
 
+# -------------------------------
+# Domain Filter
+# -------------------------------
+
 biomedical_keywords = [
     "gene", "protein", "dna", "rna",
     "mutation", "cancer", "drug",
@@ -29,7 +45,14 @@ def is_biomedical(question: str):
     return any(word in question.lower() for word in biomedical_keywords)
 
 
+# -------------------------------
+# LLM Call Functions
+# -------------------------------
+
 def call_groq(final_prompt: str):
+    if not settings.GROQ_API_KEY:
+        raise ValueError("GROQ_API_KEY not set")
+
     client = Groq(api_key=settings.GROQ_API_KEY)
 
     response = client.chat.completions.create(
@@ -44,6 +67,9 @@ def call_groq(final_prompt: str):
 
 
 def call_gemini(final_prompt: str):
+    if not settings.GEMINI_API_KEY:
+        raise ValueError("GEMINI_API_KEY not set")
+
     client = genai.Client(api_key=settings.GEMINI_API_KEY)
 
     response = client.models.generate_content(
@@ -55,23 +81,43 @@ def call_gemini(final_prompt: str):
     return response.text
 
 
+# -------------------------------
+# Summarization Logic
+# -------------------------------
+
 def summarize_history(conversation_text: str, provider: str):
+
+    logger.info("Summarizing conversation history...")
+
     summary_prompt = f"""
-Summarize the following conversation briefly:
+Summarize the following biomedical conversation briefly and retain key scientific points:
 
 {conversation_text}
 """
 
     if provider == "Groq":
         return call_groq(summary_prompt)
+
     elif provider == "Gemini":
         return call_gemini(summary_prompt)
 
+    else:
+        raise ValueError("Invalid provider for summarization")
+
+
+# -------------------------------
+# Main Response Generator
+# -------------------------------
 
 def generate_response(provider: str, prompt: str, memory_enabled: bool, history: list):
 
     if not is_biomedical(prompt):
+        logger.info("Non-biomedical question detected.")
         return "⚠️ This chatbot only answers biomedical questions."
+
+    # ---------------------------
+    # Memory Enabled
+    # ---------------------------
 
     if memory_enabled:
 
@@ -80,15 +126,43 @@ def generate_response(provider: str, prompt: str, memory_enabled: bool, history:
         for m in history:
             conversation_text += f"{m['role']}: {m['content']}\n"
 
-        # Check context size
-        if len(conversation_text) > settings.CONTEXT_SIZE:
-            summary = summarize_history(conversation_text, provider)
-            conversation_text = f"Summary of previous conversation:\n{summary}\n"
+        context_length = len(conversation_text)
+        logger.info(f"Context length: {context_length}")
 
-        final_prompt = BIOMED_SYSTEM_PROMPT + "\n\nConversation:\n" + conversation_text
+        # Check threshold from config
+        if context_length > settings.CONTEXT_SIZE:
+            logger.info("Context exceeded threshold. Triggering summarization.")
+
+            summary = summarize_history(conversation_text, provider)
+
+            logger.info("Summary generated successfully.")
+            logger.info(f"Summary preview: {summary[:200]}")
+
+            conversation_text = (
+                f"Summary of previous conversation:\n{summary}\n"
+            )
+
+        final_prompt = (
+            BIOMED_SYSTEM_PROMPT
+            + "\n\nConversation:\n"
+            + conversation_text
+            + f"\nUser: {prompt}"
+        )
+
+    # ---------------------------
+    # Memory Disabled
+    # ---------------------------
 
     else:
-        final_prompt = BIOMED_SYSTEM_PROMPT + "\n\nUser Question:\n" + prompt
+        final_prompt = (
+            BIOMED_SYSTEM_PROMPT
+            + "\n\nUser Question:\n"
+            + prompt
+        )
+
+    # ---------------------------
+    # Route to Selected Provider
+    # ---------------------------
 
     if provider == "Groq":
         return call_groq(final_prompt)
