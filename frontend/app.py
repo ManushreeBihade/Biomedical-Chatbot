@@ -8,7 +8,7 @@ st.title("🧬 Biomedical Multi-LLM Chatbot")
 
 st.sidebar.header("⚙️ Configuration")
 
-provider = st.sidebar.selectbox("Select LLM Provider", ["Groq", "Gemini"])
+provider = st.sidebar.selectbox("Select LLM Provider", ["Groq", "Gemini", "LocalTinyLlama"])
 memory_enabled = st.sidebar.toggle("Enable Memory", value=True)
 
 if st.sidebar.button("Clear Chat"):

@@ -2,6 +2,8 @@ from groq import Groq
 from google import genai
 from backend.core.config import settings
 import logging
+from transformers import AutoTokenizer, AutoModelForCausalLM
+import torch
 
 # -------------------------------
 # Logging Configuration
@@ -44,6 +46,23 @@ biomedical_keywords = [
 def is_biomedical(question: str):
     return any(word in question.lower() for word in biomedical_keywords)
 
+# -------------------------------
+# Local TinyLlama Model
+# -------------------------------
+
+LOCAL_MODEL_NAME = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
+
+print("Loading Local TinyLlama model...")
+
+local_tokenizer = AutoTokenizer.from_pretrained(LOCAL_MODEL_NAME)
+
+local_model = AutoModelForCausalLM.from_pretrained(
+    LOCAL_MODEL_NAME,
+    torch_dtype=torch.float32,
+    device_map="cpu"
+)
+
+print("Local TinyLlama ready.")
 
 # -------------------------------
 # LLM Call Functions
@@ -57,9 +76,7 @@ def call_groq(final_prompt: str):
 
     response = client.chat.completions.create(
         model="llama-3.1-8b-instant",
-        messages=[
-            {"role": "user", "content": final_prompt}
-        ],
+        messages=[{"role": "user", "content": final_prompt}],
         temperature=0.7
     )
 
@@ -79,6 +96,27 @@ def call_gemini(final_prompt: str):
     )
 
     return response.text
+
+
+def call_local_tinyllama(final_prompt: str):
+
+    formatted_prompt = f"<|user|>\n{final_prompt}\n<|assistant|>"
+
+    inputs = local_tokenizer(formatted_prompt, return_tensors="pt")
+
+    with torch.no_grad():
+        outputs = local_model.generate(
+            **inputs,
+            max_new_tokens=200,
+            temperature=0.7,
+            do_sample=True
+        )
+
+    decoded = local_tokenizer.decode(outputs[0], skip_special_tokens=True)
+
+    response = decoded.split("<|assistant|>")[-1].strip()
+
+    return response
 
 
 # -------------------------------
@@ -101,8 +139,11 @@ Summarize the following biomedical conversation briefly and retain key scientifi
     elif provider == "Gemini":
         return call_gemini(summary_prompt)
 
+    elif provider == "LocalTinyLlama":
+        return call_local_tinyllama(summary_prompt)
+
     else:
-        raise ValueError("Invalid provider for summarization")
+        raise ValueError("Invalid provider")
 
 
 # -------------------------------
@@ -129,7 +170,6 @@ def generate_response(provider: str, prompt: str, memory_enabled: bool, history:
         context_length = len(conversation_text)
         logger.info(f"Context length: {context_length}")
 
-        # Check threshold from config
         if context_length > settings.CONTEXT_SIZE:
             logger.info("Context exceeded threshold. Triggering summarization.")
 
@@ -169,6 +209,9 @@ def generate_response(provider: str, prompt: str, memory_enabled: bool, history:
 
     elif provider == "Gemini":
         return call_gemini(final_prompt)
+
+    elif provider == "LocalTinyLlama":
+        return call_local_tinyllama(final_prompt)
 
     else:
         raise ValueError("Invalid provider")
